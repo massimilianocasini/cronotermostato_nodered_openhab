@@ -29,13 +29,13 @@ Un cronotermostato settimanale completo con interfaccia Dashboard 2.x (Vue.js) p
 ├─────────────────────────────────────────────────────────┤
 │  [▼ Giù]  [▲ Su]  [⧉ Copia]  [💾 Salva]  [✕ Annulla]  │
 ├─────────────────────────────────────────────────────────┤
-│ ┌─────────────┐  ┌────────────────────────────────────┐ │
-│ │   GAUGE     │  │  🔥 Caldaia           ACCESA       │ │
-│ │             │  ├────────────────────────────────────┤ │
-│ │   20.4°C    │  │  🎯 Setpoint          21°C        │ │
-│ │ Temperatura │  ├────────────────────────────────────┤ │
-│ └─────────────┘  │  🅰️ Modalità          AUTO        │ │
-│                  └────────────────────────────────────┘ │
+│  ┌──────────────────┐  ┌──────────────────────────────┐ │
+│  │     GAUGE        │  │  🔥 Caldaia         ACCESA   │ │
+│  │                  │  ├──────────────────────────────┤ │
+│  │     20.4°C       │  │  🎯 Setpoint        21 °C   │ │
+│  │   Temperatura    │  ├──────────────────────────────┤ │
+│  └──────────────────┘  │  ⚙️ Modo            AUTO     │ │
+│                        └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -54,17 +54,17 @@ Un cronotermostato settimanale completo con interfaccia Dashboard 2.x (Vue.js) p
 
 ### Interfaccia
 - **Dashboard 2.x** con Vue.js e tema scuro
-- **Gauge temperatura** con ago animato e segmenti colorati
-- **Icona caldaia animata**: fiamma accesa/spenta con effetto glow
+- **Gauge temperatura** con segmenti colorati (blu→verde→arancio→rosso)
+- **Icona caldaia animata**: fiamma con effetto flicker e glow quando accesa
 - **Barre orarie colorate** in base alla temperatura programmata
 - **Evidenziazione ora corrente** con bordo rosso
 - **Badge "OGGI"** quando si visualizza il giorno corrente
+- **Stati caldaia**: ACCESA/SPENTA con indicazione visiva
 
 ### Automazione
-- **Visualizzazione giorno corrente** all'avvio del flow
-- **Timeout automatico**: ritorna al giorno corrente dopo 30 secondi di inattività
-- **Isteresi configurabile**: controllo preciso con soglie (+0.1°C / -0.2°C)
-- **Anti-rimbalzo**: filtro RBE per evitare comandi ripetuti
+- **Calcolo setpoint** ogni 30 secondi
+- **Isteresi configurabile**: controllo preciso della caldaia
+- **Architettura ottimizzata**: nessun loop, basso consumo CPU
 
 ## 📋 Prerequisiti
 
@@ -98,7 +98,7 @@ cd cronotermostato-nodered
 
 1. Apri Node-RED (`http://localhost:1880`)
 2. Menu ☰ → **Import**
-3. Seleziona il file `cronotermostato_v6.json`
+3. Seleziona il file `cronotermostato_v8.json`
 4. Click **Import**
 
 ### 3. Configura gli item openHAB
@@ -150,9 +150,6 @@ http://<IP-SERVER>:1880/dashboard/termostato
 ### Salvataggio
 - **💾 Salva**: salva la programmazione su file (persistente al riavvio)
 - **✕ Annulla**: ricarica l'ultima programmazione salvata e torna al giorno corrente
-
-### Timeout automatico
-Dopo 30 secondi di inattività, se stai visualizzando un giorno diverso da oggi, la vista torna automaticamente al giorno corrente.
 
 ## ⚙️ Configurazione openHAB
 
@@ -213,20 +210,11 @@ sitemap riscaldamento label="Riscaldamento" {
 
 ### Modificare range temperatura
 
-Nel nodo `Logica Cronotermostato`, modifica le costanti:
+Nel componente Vue (template "Cronotermostato UI"), modifica i valori in `tempUp()` e `tempDown()`:
 
 ```javascript
-const TEMP_MIN = 14;    // Temperatura minima
-const TEMP_MAX = 26;    // Temperatura massima
-const TEMP_STEP = 0.5;  // Step di regolazione
-```
-
-### Modificare timeout ritorno a oggi
-
-Nel nodo `Logica Cronotermostato`, nella sezione **On Start** (inizializzazione):
-
-```javascript
-flow.set('timeoutSeconds', 30);  // Cambia questo valore (in secondi)
+if (this.timing[idx] < 26) { ... }  // Max
+if (this.timing[idx] > 14) { ... }  // Min
 ```
 
 ### Modificare isteresi
@@ -234,15 +222,12 @@ flow.set('timeoutSeconds', 30);  // Cambia questo valore (in secondi)
 Nel nodo `Calcolo Termostato`:
 
 ```javascript
-msg3.payload = 0.1;  // Isteresi positiva
-msg4.payload = 0.2;  // Isteresi negativa
+let hyst = modo === 2 ? 0 : 0.15;  // Cambia 0.15
 ```
 
-### Modificare polling
+### Modificare polling termostato
 
-Il nodo `inject` "30s" controlla la frequenza di aggiornamento del termostato. Modifica il campo `repeat` per cambiare l'intervallo.
-
-Il nodo `inject` "Ogni 10s" controlla l'aggiornamento dell'ora e il check del timeout.
+Il nodo `inject` "30s" controlla la frequenza di aggiornamento. Modifica il campo `repeat` per cambiare l'intervallo.
 
 ### Personalizzare tema
 
@@ -260,16 +245,50 @@ Modifica il nodo `ui-theme` "Dark" per cambiare i colori:
 
 ### Personalizzare colori barre temperatura
 
-Nel template Vue.js, funzione `barCss()`:
+Nel template Vue, funzione `barCss()`:
 
 ```javascript
-if (t <= 16) c = '#1E88E5';      // Blu (freddo)
-else if (t <= 18) c = '#00ACC1'; // Ciano
-else if (t <= 20) c = '#388E3C'; // Verde
-else if (t <= 22) c = '#8BC34A'; // Verde chiaro
-else if (t <= 24) c = '#FFC107'; // Giallo
-else c = '#FF5722';              // Arancione (caldo)
+const c = t <= 16 ? '#1E88E5'      // Blu (freddo)
+        : t <= 18 ? '#00ACC1'      // Ciano
+        : t <= 20 ? '#388E3C'      // Verde
+        : t <= 22 ? '#8BC34A'      // Verde chiaro
+        : t <= 24 ? '#FFC107'      // Giallo
+        : '#FF5722';               // Arancione (caldo)
 ```
+
+## 🏗️ Architettura
+
+### Flusso dati (senza loop)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    INTERFACCIA UTENTE                       │
+│  ┌─────────────────┐                                        │
+│  │ Cronotermostato │ ──save──→ Gestione ──→ File Salva     │
+│  │   UI (Vue.js)   │ ←─load─── Dati    ←── File Carica     │
+│  └─────────────────┘                                        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    LOGICA TERMOSTATO                        │
+│  Inject 30s ──→ Calcolo ──→ ramp-thermo ──→ Output Caldaia │
+│                    │              │               │         │
+│                    ↓              ↓               ↓         │
+│              ui-setpoint     ui-gauge       ui-caldaia      │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                      INPUT openHAB                          │
+│  SonoOffT ──→ Salva Temp ──→ global + ui-gauge             │
+│  Modo     ──→ Salva Modo ──→ global + ui-modo              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Caratteristiche tecniche
+- **Nessun link node**: elimina possibili loop di feedback
+- **Logica nel Vue**: navigazione e modifica temperature gestite client-side
+- **passthru: false**: i template non propagano messaggi
+- **Basso consumo CPU**: architettura ottimizzata
 
 ## 📁 Struttura file
 
@@ -277,7 +296,7 @@ else c = '#FF5722';              // Arancione (caldo)
 cronotermostato-nodered/
 ├── README.md
 ├── LICENSE
-├── cronotermostato_v6.json    # Flow Node-RED principale
+├── cronotermostato_v8.json    # Flow Node-RED principale
 └── examples/
     └── openhab/
         ├── items/
@@ -311,14 +330,10 @@ cronotermostato-nodered/
 - Crea la cartella se non esiste: `mkdir -p /etc/openhab/nodered/data`
 - Controlla lo status del nodo `Salva`
 
-### Gauge non si aggiorna
-- Il gauge si aggiorna ogni 30 secondi (polling termostato)
-- Verifica che il sensore temperatura invii dati
-- Controlla il nodo `Aggiorna Status Panel`
-
-### Timeout non funziona
-- Verifica che il nodo `inject` "Ogni 10s" sia attivo
-- Controlla il valore di `timeoutSeconds` nel nodo logica
+### CPU al 100%
+- Questa versione (v8) è ottimizzata per evitare loop
+- Se il problema persiste, verifica altri flow attivi
+- Controlla che non ci siano nodi openHAB che inviano troppi eventi
 
 ## 📄 Licenza
 
@@ -336,24 +351,32 @@ Contributi, issue e feature request sono benvenuti!
 
 ## 📝 Changelog
 
-### v6 (Corrente)
-- Nuovo pannello stato con gauge SVG e icone animate
-- Layout a due colonne per gauge e stati
-- Icona caldaia animata (fiamma accesa/spenta)
-- Temperatura forzata a 1 decimale
-- Rimossi widget Dashboard separati (tutto integrato in Vue.js)
-- Layout più compatto e moderno
+### v8 (Corrente)
+- Architettura completamente riscritta senza link nodes
+- Logica navigazione/modifica spostata nel componente Vue
+- Risolto problema CPU al 100%
+- Widget caldaia con fiamma animata (flicker + glow)
+- Stati caldaia: ACCESA/SPENTA invece di ON/OFF
+- Gauge temperatura con widget nativo Dashboard 2.x
+
+### v7
+- Tentativo fix CPU con rimozione init dal mounted
+- Semplificazione generale
+
+### v6
+- Pannello stato con gauge SVG personalizzato
+- Layout a due colonne
+- Prima implementazione fiamma animata
 
 ### v5
-- Aggiunta barra data/ora sempre visibile
-- Visualizzazione giorno corrente all'avvio
+- Barra data/ora sempre visibile
 - Timeout automatico ritorno a oggi
-- Pulsante "OGGI" per tornare al giorno corrente
+- Pulsante "OGGI"
 - Evidenziazione ora corrente
 
 ### v4
 - Fix loop navigazione giorni
-- Copia intera giornata invece di singola ora
+- Copia intera giornata
 - Pulsanti ◀ ▶ separati
 
 ### v3
